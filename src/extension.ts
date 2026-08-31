@@ -2,7 +2,6 @@ import * as vscode from "vscode";
 import { analyzeWorkspace } from "./analyzer";
 
 export function activate(context: vscode.ExtensionContext) {
-  console.log("🚀 CodeMapper extension activated");
     const command = vscode.commands.registerCommand(
         "codemapper-ai.scanWorkspace",
         async () => {
@@ -21,8 +20,6 @@ export function activate(context: vscode.ExtensionContext) {
     );
 
     context.subscriptions.push(command);
-
-    console.log("✅ CodeMapper command registered");
 }
 
 export function deactivate() {}

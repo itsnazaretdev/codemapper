@@ -3,12 +3,9 @@ import { CodeFile } from "./types";
 
 export async function scanWorkspace(): Promise<CodeFile[]> {
     const excludePattern =
-        "**/{node_modules,.git,dist,out,build,.vscode}/**";
+    "{**/node_modules/**,**/.git/**,**/.vscode-test/**,**/dist/**}";
 
-    const files = await vscode.workspace.findFiles(
-        "**/*",
-        excludePattern,
-    );
+   const files = await vscode.workspace.findFiles("**/*.ts");
 
     return files
         .map((file) => ({
