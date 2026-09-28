@@ -2,10 +2,10 @@ import * as vscode from "vscode";
 import { CodeFile } from "./types";
 import { getAnalyzer } from "../languages";
 
-const INCLUDE_PATTERN = "**/*.{ts,tsx,mts,cts,java}";
+const INCLUDE_PATTERN = "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,java,py,pyi,cs,php}";
 
 const EXCLUDE_PATTERN =
-    "**/{node_modules,.git,.vscode-test,dist,out,build,coverage,target,.gradle}/**";
+    "**/{node_modules,bower_components,vendor,.git,.vscode-test,dist,out,build,coverage,target,.gradle,.next,.nuxt,.svelte-kit,.turbo,.cache,__pycache__,.venv,venv,.tox,.mypy_cache,site-packages,bin,obj}/**";
 
 export const MAX_FILES = 5000;
 

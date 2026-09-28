@@ -95,7 +95,7 @@
             showMessage(
                 activeTab === "classes"
                     ? "No se han encontrado clases, interfaces ni enums."
-                    : "No se han encontrado archivos compatibles (por ahora: TypeScript y Java).",
+                    : "No se han encontrado archivos compatibles (TypeScript, JavaScript, Java, Python, C# y PHP).",
             );
             return;
         }

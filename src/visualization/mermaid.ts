@@ -117,13 +117,14 @@ export function graphToClassDiagram(graph: CodeGraph): Diagram {
         lines.push(`    class ${id}["${label(symbol.name)}"] {`);
 
         const annotation =
-            symbol.kind === "interface"
+            symbol.stereotype ??
+            (symbol.kind === "interface"
                 ? "interface"
                 : symbol.kind === "enum"
                   ? "enumeration"
                   : symbol.isAbstract
                     ? "abstract"
-                    : undefined;
+                    : undefined);
         if (annotation) {
             lines.push(`        <<${annotation}>>`);
         }
@@ -209,7 +210,7 @@ function memberType(type: string | undefined): string | undefined {
     }
 
     const converted = type.replace(/[<>]/g, "~");
-    return /^[\w$.~[\], |]+$/.test(converted) ? converted : undefined;
+    return /^[\w$.~[\], |?]+$/.test(converted) ? converted : undefined;
 }
 
 /** Text safe inside a Mermaid `["..."]` label. */

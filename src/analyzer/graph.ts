@@ -5,6 +5,11 @@ import {
     FileAnalysis,
 } from "./types";
 
+/**
+ * Candidate files an import may point to, in priority order. A candidate
+ * starting with `*\/` matches any file ending with that path (languages
+ * like Python import from a source root that is not known in advance).
+ */
 export type ImportResolver = (fromFile: string, specifier: string) => string[];
 
 /**
@@ -58,10 +63,36 @@ export function buildGraph(
     };
 
     const analysisByFile = new Map(sorted.map((a) => [a.file, a]));
-    const resolveTarget = (fromFile: string, specifier: string) =>
-        resolveImport(fromFile, specifier).find((candidate) =>
-            knownFiles.has(candidate),
-        );
+
+    /** File name -> files with that name (sorted), for suffix candidates. */
+    const filesByName = new Map<string, string[]>();
+    for (const file of knownFiles) {
+        const name = file.slice(file.lastIndexOf("/") + 1);
+        filesByName.set(name, [...(filesByName.get(name) ?? []), file]);
+    }
+
+    const matchCandidate = (candidate: string): string | undefined => {
+        if (!candidate.startsWith("*/")) {
+            return knownFiles.has(candidate) ? candidate : undefined;
+        }
+
+        // Shortest match wins (closest to a source root), then alphabetical.
+        const suffix = candidate.slice(2);
+        const name = suffix.slice(suffix.lastIndexOf("/") + 1);
+        return (filesByName.get(name) ?? [])
+            .filter((file) => file === suffix || file.endsWith(`/${suffix}`))
+            .sort((a, b) => a.length - b.length || compare(a, b))[0];
+    };
+
+    const resolveTarget = (fromFile: string, specifier: string) => {
+        for (const candidate of resolveImport(fromFile, specifier)) {
+            const match = matchCandidate(candidate);
+            if (match) {
+                return match;
+            }
+        }
+        return undefined;
+    };
 
     /** Follows `export ... from` chains (barrel files) to the declaration. */
     const resolveExport = (
@@ -84,8 +115,9 @@ export function buildGraph(
             return direct;
         }
 
-        for (const ref of analysisByFile.get(file)?.imports ?? []) {
-            if (!ref.reexport) {
+        const analysis = analysisByFile.get(file);
+        for (const ref of analysis?.imports ?? []) {
+            if (!ref.reexport && !analysis?.importsAreExports) {
                 continue;
             }
             const target = resolveTarget(file, ref.source);
@@ -96,7 +128,9 @@ export function buildGraph(
             for (const { imported, local } of ref.names) {
                 const found =
                     imported === "*"
-                        ? name !== "default" && resolveExport(target, name, seen)
+                        ? local === "*" &&
+                          name !== "default" &&
+                          resolveExport(target, name, seen)
                         : local === name && resolveExport(target, imported, seen);
                 if (found) {
                     return found;
@@ -170,6 +204,14 @@ export function buildGraph(
             }
 
             for (const { imported, local } of ref.names) {
+                if (imported === "*" && local === "*") {
+                    // `from x import *`: every name of the module.
+                    for (const [name, symbol] of symbolsByFile.get(target) ?? []) {
+                        scope.set(name, symbol);
+                    }
+                    continue;
+                }
+
                 if (imported === "*") {
                     namespaces.set(local, target);
                     continue;
@@ -198,7 +240,17 @@ export function buildGraph(
                 continue;
             }
 
-            addRelation({ from: ref.from, to: target.id, type: ref.type });
+            // `class A : IThing` (C#) / `class A(Protocol)` (Python) do not say
+            // whether the base is a class or an interface: the target does.
+            const fromKind = symbolsById.get(ref.from)?.kind;
+            const type =
+                ref.type === "inherits" &&
+                fromKind !== "interface" &&
+                target.kind === "interface"
+                    ? "implements"
+                    : ref.type;
+
+            addRelation({ from: ref.from, to: target.id, type });
 
             // Same-package / wildcard usages have no import line to draw.
             if (analysis.namespace !== undefined) {
@@ -234,15 +286,16 @@ function resolveName(
         resolveExport: (file: string, name: string) => CodeSymbol | undefined;
     },
 ): CodeSymbol | undefined {
-    const dot = name.indexOf(".");
-    if (dot === -1) {
+    if (!name.includes(".")) {
         return context.scope.get(name);
     }
 
-    // `ns.Foo` where `import * as ns from "./x"`.
-    const file = context.namespaces.get(name.slice(0, dot));
-    if (file) {
-        return context.resolveExport(file, name.slice(dot + 1));
+    // `ns.Foo` where `import * as ns from "./x"` (or `import a.b` + `a.b.Foo`).
+    for (let end = name.lastIndexOf("."); end > 0; end = name.lastIndexOf(".", end - 1)) {
+        const file = context.namespaces.get(name.slice(0, end));
+        if (file) {
+            return context.resolveExport(file, name.slice(end + 1));
+        }
     }
 
     // Fully qualified name: `com.app.model.Book`.

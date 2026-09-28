@@ -175,6 +175,161 @@ public class Repo { List<com.app.model.Book> all() { return null; } }`,
     });
 });
 
+suite("JavaScript", () => {
+    const jsSources: SourceFile[] = [
+        {
+            path: "src/animal.js",
+            content: `class Animal { constructor(n) { this.name = n; } speak() {} }\nmodule.exports = Animal;`,
+        },
+        {
+            path: "src/dog.mjs",
+            content: `import Animal from "./animal.js";\nimport { Owner } from "./owner";\nexport class Dog extends Animal { constructor() { super(); this.owner = new Owner(); } }`,
+        },
+        {
+            path: "src/owner.cjs",
+            content: `class Owner {}\nmodule.exports = { Owner };`,
+        },
+        {
+            path: "src/app.jsx",
+            content: `const { Dog } = require("./dog.mjs");\nclass App { render() { return <div>{new Dog()}</div>; } }`,
+        },
+        { path: "src/vendor.min.js", content: `class Minified {}` },
+    ];
+
+    test("resolves require, module.exports and JSX", () => {
+        const { graph, failedFiles } = analyzeSources(shuffled(jsSources));
+        const dog = "src/dog.mjs#Dog";
+
+        assert.deepStrictEqual(failedFiles, []);
+        assert.ok(hasRelation(graph, dog, "src/animal.js#Animal", "inherits"));
+        assert.ok(hasRelation(graph, "src/app.jsx#App", dog, "uses"));
+        assert.ok(hasRelation(graph, dog, "src/owner.cjs#Owner", "uses"), "extensionless import");
+        assert.ok(!graph.symbols.some((s) => s.name === "Minified"), "min.js is ignored");
+
+        const animal = graph.symbols.find((s) => s.name === "Animal");
+        assert.deepStrictEqual(animal?.members?.map((m) => m.name), ["name", "speak"]);
+    });
+});
+
+suite("Python", () => {
+    const pySources: SourceFile[] = [
+        {
+            path: "src/app/models/base.py",
+            content: `from abc import ABC\nfrom enum import Enum\nclass Named(ABC):\n    def name(self) -> str: ...\nclass Base: pass\nclass Role(Enum):\n    ADMIN = 1\n`,
+        },
+        {
+            path: "src/app/models/user.py",
+            content: `from .base import Base, Named, Role\nclass User(Base, Named):\n    def __init__(self):\n        self._role: Role = Role.ADMIN\n    @staticmethod\n    def make() -> "User": ...\n`,
+        },
+        { path: "src/app/models/__init__.py", content: `from .user import User\n` },
+        {
+            path: "src/app/services/users.py",
+            content: `from app.models import User\nimport app.models.base as b\nclass Users:\n    def get(self) -> User: ...\n    def base(self) -> b.Base: ...\n`,
+        },
+    ];
+
+    test("resolves relative, absolute and package imports", () => {
+        const { graph } = analyzeSources(shuffled(pySources));
+        const user = "src/app/models/user.py#User";
+        const users = "src/app/services/users.py#Users";
+
+        assert.ok(hasRelation(graph, user, "src/app/models/base.py#Base", "inherits"));
+        assert.ok(hasRelation(graph, user, "src/app/models/base.py#Named", "implements"));
+        assert.ok(hasRelation(graph, user, "src/app/models/base.py#Role", "uses"));
+        assert.ok(hasRelation(graph, users, user, "uses"), "through __init__.py");
+        assert.ok(hasRelation(graph, users, "src/app/models/base.py#Base", "uses"), "module alias");
+
+        const role = graph.symbols.find((s) => s.name === "Role");
+        assert.strictEqual(role?.kind, "enum");
+        const member = graph.symbols.find((s) => s.id === user)?.members;
+        assert.deepStrictEqual(member?.map((m) => `${m.visibility} ${m.name}${m.isStatic ? "$" : ""}`), [
+            "protected _role",
+            "public make$",
+        ]);
+    });
+});
+
+suite("C#", () => {
+    const csSources: SourceFile[] = [
+        {
+            path: "App/Models/User.cs",
+            content: `namespace App.Models { public abstract class Entity {} public interface IUser {} public class User : Entity, IUser { public string Name { get; set; } internal int Age; } }`,
+        },
+        {
+            path: "App/Services/UserService.cs",
+            content: `using App.Models;\nusing Alias = App.Models.Entity;\nnamespace App.Services;\npublic class UserService { private readonly List<User> _users; public Alias Get() => null; }`,
+        },
+        {
+            path: "App/Core.cs",
+            content: `namespace App;\npublic enum Role { Admin }`,
+        },
+        {
+            path: "App/Services/Other.cs",
+            content: `namespace App.Services;\nclass Other { Role role; UserService service; }`,
+        },
+    ];
+
+    test("resolves namespaces, using aliases and base lists", () => {
+        const { graph } = analyzeSources(shuffled(csSources));
+        const user = "App/Models/User.cs#User";
+        const service = "App/Services/UserService.cs#UserService";
+        const other = "App/Services/Other.cs#Other";
+
+        assert.ok(hasRelation(graph, user, "App/Models/User.cs#Entity", "inherits"));
+        assert.ok(hasRelation(graph, user, "App/Models/User.cs#IUser", "implements"));
+        assert.ok(hasRelation(graph, service, user, "uses"), "generic argument");
+        assert.ok(hasRelation(graph, service, "App/Models/User.cs#Entity", "uses"), "using alias");
+        assert.ok(hasRelation(graph, other, service, "uses"), "same namespace");
+        assert.ok(hasRelation(graph, other, "App/Core.cs#Role", "uses"), "parent namespace");
+
+        const members = graph.symbols.find((s) => s.id === user)?.members;
+        assert.deepStrictEqual(members?.map((m) => `${m.visibility} ${m.name}`), [
+            "public Name",
+            "package Age",
+        ]);
+    });
+});
+
+suite("PHP", () => {
+    const phpSources: SourceFile[] = [
+        {
+            path: "app/Models/User.php",
+            content: `<?php\nnamespace App\\Models;\nabstract class Model {}\nclass Team {}\nclass User extends Model { protected $fillable = []; public function team(): Team { return $this->belongsTo(Team::class); } }`,
+        },
+        {
+            path: "app/Contracts/Repo.php",
+            content: `<?php\nnamespace App\\Contracts;\ninterface Repo {}`,
+        },
+        {
+            path: "app/Services/UserService.php",
+            content: `<?php\nnamespace App\\Services;\nuse App\\Models\\User;\nuse App\\Contracts\\Repo as RepoContract;\ntrait Logs {}\nclass UserService implements RepoContract {\n    use Logs;\n    public function __construct(private User $user) {}\n    public function team() { return new \\App\\Models\\Team(); }\n    public static function all(): ?User { return User::query(); }\n}\n?>\n<p>html</p>`,
+        },
+    ];
+
+    test("resolves namespaces, use aliases, traits and qualified names", () => {
+        const { graph, failedFiles } = analyzeSources(shuffled(phpSources));
+        const user = "app/Models/User.php#User";
+        const service = "app/Services/UserService.php#UserService";
+
+        assert.deepStrictEqual(failedFiles, []);
+        assert.ok(hasRelation(graph, user, "app/Models/User.php#Model", "inherits"));
+        assert.ok(hasRelation(graph, user, "app/Models/User.php#Team", "uses"), "same namespace");
+        assert.ok(hasRelation(graph, service, "app/Contracts/Repo.php#Repo", "implements"), "use alias");
+        assert.ok(hasRelation(graph, service, user, "uses"));
+        assert.ok(hasRelation(graph, service, "app/Models/User.php#Team", "uses"), "qualified name");
+        assert.ok(hasRelation(graph, service, "app/Services/UserService.php#Logs", "uses"), "trait");
+
+        const logs = graph.symbols.find((s) => s.name === "Logs");
+        assert.strictEqual(logs?.stereotype, "trait");
+        const members = graph.symbols.find((s) => s.id === service)?.members;
+        assert.deepStrictEqual(members?.map((m) => `${m.visibility} ${m.name}`), [
+            "private user",
+            "public team",
+            "public all",
+        ]);
+    });
+});
+
 suite("Workspace", () => {
     test("analyzes the opened workspace deterministically", async () => {
         const folder = vscode.workspace.workspaceFolders?.[0];

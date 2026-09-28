@@ -31,6 +31,8 @@ export interface CodeSymbol {
     exported: boolean;
     isDefault?: boolean;
     isAbstract?: boolean;
+    /** Extra label shown in the class diagram, e.g. "trait". */
+    stereotype?: string;
     members?: CodeMember[];
 }
 
@@ -88,6 +90,11 @@ export interface FileAnalysis {
      * each other's symbols without imports.
      */
     namespace?: string;
+    /**
+     * Imported names are visible to importers of this file too (Python:
+     * `from .user import User` in `__init__.py` re-exports User).
+     */
+    importsAreExports?: boolean;
     symbols: CodeSymbol[];
     imports: ImportRef[];
     references: SymbolReference[];

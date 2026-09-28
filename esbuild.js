@@ -58,7 +58,10 @@ async function main() {
 		external: ['vscode',
     'tree-sitter',
     'tree-sitter-typescript',
-    'tree-sitter-java',],
+    'tree-sitter-java',
+    'tree-sitter-python',
+    'tree-sitter-c-sharp',
+    'tree-sitter-php',],
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */

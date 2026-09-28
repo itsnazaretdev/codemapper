@@ -14,7 +14,9 @@ import {
 
 type SyntaxNode = Parser.SyntaxNode;
 
-const EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
+const TS_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts"];
+const JS_EXTENSIONS = [".js", ".jsx", ".mjs", ".cjs"];
+const EXTENSIONS = [...TS_EXTENSIONS, ...JS_EXTENSIONS];
 
 const JS_TO_TS: Record<string, string[]> = {
     ".js": [".ts", ".tsx"],
@@ -26,8 +28,13 @@ const JS_TO_TS: Record<string, string[]> = {
 let tsParser: Parser | undefined;
 let tsxParser: Parser | undefined;
 
+/**
+ * One analyzer for TypeScript and JavaScript: the TypeScript grammars are a
+ * superset of JavaScript. JS may contain JSX, so it uses the TSX grammar.
+ */
 function getParser(filePath: string): Parser {
-    if (filePath.endsWith(".tsx")) {
+    const ext = path.posix.extname(filePath);
+    if (ext === ".tsx" || JS_EXTENSIONS.includes(ext)) {
         if (!tsxParser) {
             tsxParser = new Parser();
             tsxParser.setLanguage(TypeScript.tsx);
@@ -53,7 +60,8 @@ export const typescriptAnalyzer: LanguageAnalyzer = {
     supports(file: CodeFile): boolean {
         return (
             EXTENSIONS.some((ext) => file.path.endsWith(ext)) &&
-            !file.path.endsWith(".d.ts")
+            // Declarations and bundled/minified output are not source code.
+            !/\.(d\.ts|min\.js|bundle\.js)$/.test(file.path)
         );
     },
 
@@ -72,13 +80,14 @@ export const typescriptAnalyzer: LanguageAnalyzer = {
         );
         const ext = path.posix.extname(base);
 
-        if (EXTENSIONS.includes(ext)) {
-            return [base];
+        if (JS_TO_TS[ext]) {
+            // `./x.js` is the real file in JS, or the compiled name of `./x.ts`.
+            const stem = base.slice(0, -ext.length);
+            return [base, ...JS_TO_TS[ext].map((tsExt) => stem + tsExt)];
         }
 
-        if (JS_TO_TS[ext]) {
-            const stem = base.slice(0, -ext.length);
-            return JS_TO_TS[ext].map((tsExt) => stem + tsExt);
+        if (EXTENSIONS.includes(ext)) {
+            return [base];
         }
 
         return [
@@ -188,6 +197,10 @@ class FileVisitor {
             case "variable_declaration":
                 this.visitVariables(node, exported);
                 return;
+
+            case "expression_statement":
+                this.visitCommonJsExport(node);
+                return;
         }
     }
 
@@ -257,7 +270,17 @@ class FileVisitor {
 
             const name = declarator.childForFieldName("name");
             const value = declarator.childForFieldName("value");
-            if (!name || name.type !== "identifier" || !value) {
+            if (!name || !value) {
+                continue;
+            }
+
+            const required = requireSource(value);
+            if (required !== undefined) {
+                this.visitRequire(name, required);
+                continue;
+            }
+
+            if (name.type !== "identifier") {
                 continue;
             }
 
@@ -270,6 +293,49 @@ class FileVisitor {
             ) {
                 this.addSymbol(declarator, name.text, "function", exported);
             }
+        }
+    }
+
+    /** CommonJS: `const x = require("./x")` / `const { a, b: c } = require(...)`. */
+    private visitRequire(pattern: SyntaxNode, source: string): void {
+        const names: ImportRef["names"] = [];
+
+        if (pattern.type === "identifier") {
+            names.push({ imported: "default", local: pattern.text });
+        } else if (pattern.type === "object_pattern") {
+            for (const part of pattern.namedChildren) {
+                if (part.type === "shorthand_property_identifier_pattern") {
+                    names.push({ imported: part.text, local: part.text });
+                } else if (part.type === "pair_pattern") {
+                    const key = part.childForFieldName("key")?.text;
+                    const value = part.childForFieldName("value");
+                    if (key && value?.type === "identifier") {
+                        names.push({ imported: key, local: value.text });
+                    }
+                }
+            }
+        }
+
+        this.imports.push({ source, names });
+    }
+
+    /** CommonJS: `module.exports = Foo` / `module.exports = class Foo {}`. */
+    private visitCommonJsExport(node: SyntaxNode): void {
+        const assignment = node.namedChildren[0];
+        if (
+            assignment?.type !== "assignment_expression" ||
+            assignment.childForFieldName("left")?.text !== "module.exports"
+        ) {
+            return;
+        }
+
+        const value = assignment.childForFieldName("right");
+        if (value?.type === "class") {
+            const name = value.childForFieldName("name")?.text ?? "default";
+            this.visitClass(value, name, true);
+            this.symbols[this.symbols.length - 1].isDefault = true;
+        } else if (value?.type === "identifier") {
+            this.defaultExport = value.text;
         }
     }
 
@@ -327,6 +393,9 @@ class FileVisitor {
                 }
 
                 if (name.text === "constructor") {
+                    // JavaScript declares fields in the constructor: `this.x = ...`
+                    members.push(...thisAssignments(member.childForFieldName("body")));
+
                     // Parameter properties: `constructor(private svc: Service)`
                     const params = member.childForFieldName("parameters");
                     for (const param of params?.namedChildren ?? []) {
@@ -449,6 +518,47 @@ class FileVisitor {
             this.references.push({ from: from.id, name, type });
         }
     }
+}
+
+/** `require("./x")` -> "./x". */
+function requireSource(node: SyntaxNode): string | undefined {
+    if (
+        node.type !== "call_expression" ||
+        node.childForFieldName("function")?.text !== "require"
+    ) {
+        return undefined;
+    }
+
+    const arg = node.childForFieldName("arguments")?.namedChildren[0];
+    return arg?.type === "string" ? stringValue(arg) : undefined;
+}
+
+/** Properties created with `this.name = ...` directly in a constructor. */
+function thisAssignments(body: SyntaxNode | null): CodeMember[] {
+    const members: CodeMember[] = [];
+
+    for (const statement of body?.namedChildren ?? []) {
+        const assignment = statement.namedChildren[0];
+        const left = assignment?.childForFieldName("left");
+        if (
+            statement.type === "expression_statement" &&
+            assignment?.type === "assignment_expression" &&
+            left?.type === "member_expression" &&
+            left.childForFieldName("object")?.type === "this"
+        ) {
+            const property = left.childForFieldName("property");
+            if (property) {
+                members.push({
+                    name: property.text,
+                    kind: "property",
+                    visibility: property.type === "private_property_identifier" ? "private" : "public",
+                    isStatic: false,
+                });
+            }
+        }
+    }
+
+    return members;
 }
 
 function stringValue(node: SyntaxNode): string {
