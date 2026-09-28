@@ -1,4 +1,6 @@
 const esbuild = require("esbuild");
+const fs = require("fs");
+const path = require("path");
 
 const production = process.argv.includes('--production');
 const watch = process.argv.includes('--watch');
@@ -23,7 +25,25 @@ const esbuildProblemMatcherPlugin = {
 	},
 };
 
+/**
+ * Webview libraries are served from dist/media: node_modules is not
+ * shipped in the .vsix and the diagram must work offline.
+ */
+function copyWebviewAssets() {
+	const assets = {
+		'mermaid.min.js': require.resolve('mermaid/dist/mermaid.min.js'),
+		'panzoom.min.js': require.resolve('@panzoom/panzoom/dist/panzoom.min.js'),
+	};
+	const target = path.join(__dirname, 'dist', 'media');
+	fs.mkdirSync(target, { recursive: true });
+	for (const [name, source] of Object.entries(assets)) {
+		fs.copyFileSync(source, path.join(target, name));
+	}
+}
+
 async function main() {
+	copyWebviewAssets();
+
 	const ctx = await esbuild.context({
 		entryPoints: [
 			'src/extension.ts'
@@ -37,7 +57,8 @@ async function main() {
 		outfile: 'dist/extension.js',
 		external: ['vscode',
     'tree-sitter',
-    'tree-sitter-typescript',],
+    'tree-sitter-typescript',
+    'tree-sitter-java',],
 		logLevel: 'silent',
 		plugins: [
 			/* add to the end of plugins array */

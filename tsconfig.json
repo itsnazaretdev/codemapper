@@ -16,5 +16,8 @@
         "noImplicitReturns": true,
         "noFallthroughCasesInSwitch": true,
         "noUnusedParameters": true
-    }
+    },
+    "include": [
+        "src"
+    ]
 }

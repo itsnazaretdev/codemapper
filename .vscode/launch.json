@@ -10,8 +10,10 @@
 			"type": "extensionHost",
 			"request": "launch",
 			"args": [
+				"--disable-extensions",
 				"--extensionDevelopmentPath=${workspaceFolder}"
 			],
+			"timeout": 60000,
 			"outFiles": [
 				"${workspaceFolder}/dist/**/*.js"
 			],

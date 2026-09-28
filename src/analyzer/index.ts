@@ -1,32 +1,48 @@
 import * as vscode from "vscode";
 import { scanWorkspace } from "./scanner";
-import { buildGraph } from "./graph";
-import { CodeSymbol, CodeRelation } from "./types";
-import { parseTypeScript } from "../languages/typescript";
+import { analyzeSources } from "./core";
+import { CodeGraph } from "./types";
 
-export async function analyzeWorkspace() {
-    const files = await scanWorkspace();
+export interface WorkspaceAnalysis {
+    folder: vscode.WorkspaceFolder;
+    graph: CodeGraph;
+    fileCount: number;
+    failedFiles: string[];
+    truncated: boolean;
+}
 
-    const symbols: CodeSymbol[] = [];
-    const relations: CodeRelation[] = [];
+export async function analyzeWorkspace(
+    folder: vscode.WorkspaceFolder,
+    token?: vscode.CancellationToken,
+): Promise<WorkspaceAnalysis> {
+    const { files, truncated } = await scanWorkspace(folder);
+    const decoder = new TextDecoder();
 
-    console.log("CodeMapper - files found:");
+    const sources: { path: string; content: string }[] = [];
+    const failedFiles: string[] = [];
 
     for (const file of files) {
-        const uri = vscode.Uri.joinPath(
-            vscode.workspace.workspaceFolders![0].uri,
-            file.path,
-        );
+        if (token?.isCancellationRequested) {
+            throw new vscode.CancellationError();
+        }
 
-        const document =
-            await vscode.workspace.openTextDocument(uri);
-
-        console.log(`CodeMapper: analyzing ${file.path}`);
-
-        const tree = parseTypeScript(document.getText());
-
-        console.log(tree.rootNode.toString());
+        try {
+            const bytes = await vscode.workspace.fs.readFile(
+                vscode.Uri.joinPath(folder.uri, file.path),
+            );
+            sources.push({ path: file.path, content: decoder.decode(bytes) });
+        } catch {
+            failedFiles.push(file.path);
+        }
     }
 
-    return buildGraph(symbols, relations);
+    const result = analyzeSources(sources);
+
+    return {
+        folder,
+        graph: result.graph,
+        fileCount: files.length,
+        failedFiles: [...failedFiles, ...result.failedFiles].sort(),
+        truncated,
+    };
 }
