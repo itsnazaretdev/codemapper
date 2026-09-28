@@ -1,0 +1,99 @@
+html,
+body {
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color: var(--vscode-foreground);
+    background: var(--vscode-editor-background);
+    font-family: var(--vscode-font-family);
+    font-size: var(--vscode-font-size);
+}
+
+body {
+    display: flex;
+    flex-direction: column;
+}
+
+.toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    border-bottom: 1px solid var(--vscode-panel-border);
+    flex-wrap: wrap;
+}
+
+.tabs {
+    display: flex;
+    gap: 2px;
+}
+
+button {
+    color: var(--vscode-button-secondaryForeground);
+    background: var(--vscode-button-secondaryBackground);
+    border: none;
+    padding: 4px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    font-family: inherit;
+}
+
+button:hover {
+    background: var(--vscode-button-secondaryHoverBackground);
+}
+
+button.active {
+    color: var(--vscode-button-foreground);
+    background: var(--vscode-button-background);
+}
+
+.spacer {
+    flex: 1;
+}
+
+.stats {
+    color: var(--vscode-descriptionForeground);
+    font-size: 0.9em;
+}
+
+.warning {
+    padding: 4px 12px;
+    color: var(--vscode-editorWarning-foreground);
+    font-size: 0.9em;
+}
+
+.warning:empty {
+    display: none;
+}
+
+#viewport {
+    flex: 1;
+    overflow: hidden;
+    cursor: grab;
+    position: relative;
+}
+
+#viewport:active {
+    cursor: grabbing;
+}
+
+#canvas {
+    display: inline-block;
+    padding: 24px;
+}
+
+#canvas .node,
+#canvas .classGroup {
+    cursor: pointer;
+}
+
+.message {
+    padding: 24px;
+    color: var(--vscode-descriptionForeground);
+    white-space: pre-wrap;
+}
+
+.message.error {
+    color: var(--vscode-errorForeground);
+}
